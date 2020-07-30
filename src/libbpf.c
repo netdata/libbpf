@@ -3330,6 +3330,10 @@ int bpf_map__resize(struct bpf_map *map, __u32 max_entries)
 static int
 bpf_object__probe_loading(struct bpf_object *obj)
 {
+	// Don't probe loading for very old kernels. CentOS 7 can't load this probe.
+	if (obj->kern_version <= KERNEL_VERSION(3, 10, 0))
+		return 0;
+
 	struct bpf_load_program_attr attr;
 	char *cp, errmsg[STRERR_BUFSIZE];
 	struct bpf_insn insns[] = {
