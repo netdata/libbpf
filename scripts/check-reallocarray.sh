@@ -1,7 +1,7 @@
 #!/bin/sh
 # Usage: check-reallocarray.sh cc_path [cc_args...]
 
-tfile=$(mktemp /tmp/test_reallocarray_XXXXXXXX.c)
+tfile=$(mktemp /tmp/test_reallocarray_XXXXXXXX).c
 ofile=${tfile%.c}.o
 
 cat > $tfile <<EOL
