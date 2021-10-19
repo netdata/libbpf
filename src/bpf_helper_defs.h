@@ -190,7 +190,7 @@ static __u32 (*bpf_get_prandom_u32)(void) = (void *) 7;
  * bpf_get_smp_processor_id
  *
  * 	Get the SMP (symmetric multiprocessing) processor id. Note that
- * 	all programs run with preemption disabled, which means that the
+ * 	all programs run with migration disabled, which means that the
  * 	SMP processor id is stable during all the execution of the
  * 	program.
  *
@@ -3012,7 +3012,7 @@ static __u64 (*bpf_ktime_get_boot_ns)(void) = (void *) 125;
  * 	arguments. The *data* are a **u64** array and corresponding format string
  * 	values are stored in the array. For strings and pointers where pointees
  * 	are accessed, only the pointer values are stored in the *data* array.
- * 	The *data_len* is the size of *data* in bytes.
+ * 	The *data_len* is the size of *data* in bytes - must be a multiple of 8.
  *
  * 	Formats **%s**, **%p{i,I}{4,6}** requires to read kernel memory.
  * 	Reading kernel memory may fail due to either invalid address or
@@ -3873,7 +3873,8 @@ static long (*bpf_for_each_map_elem)(void *map, void *callback_fn, void *callbac
  * 	Each format specifier in **fmt** corresponds to one u64 element
  * 	in the **data** array. For strings and pointers where pointees
  * 	are accessed, only the pointer values are stored in the *data*
- * 	array. The *data_len* is the size of *data* in bytes.
+ * 	array. The *data_len* is the size of *data* in bytes - must be
+ * 	a multiple of 8.
  *
  * 	Formats **%s** and **%p{i,I}{4,6}** require to read kernel
  * 	memory. Reading kernel memory may fail due to either invalid
@@ -4032,5 +4033,54 @@ static __u64 (*bpf_get_func_ip)(void *ctx) = (void *) 173;
  * 	or 0, if it was not specified.
  */
 static __u64 (*bpf_get_attach_cookie)(void *ctx) = (void *) 174;
+
+/*
+ * bpf_task_pt_regs
+ *
+ * 	Get the struct pt_regs associated with **task**.
+ *
+ * Returns
+ * 	A pointer to struct pt_regs.
+ */
+static long (*bpf_task_pt_regs)(struct task_struct *task) = (void *) 175;
+
+/*
+ * bpf_get_branch_snapshot
+ *
+ * 	Get branch trace from hardware engines like Intel LBR. The
+ * 	hardware engine is stopped shortly after the helper is
+ * 	called. Therefore, the user need to filter branch entries
+ * 	based on the actual use case. To capture branch trace
+ * 	before the trigger point of the BPF program, the helper
+ * 	should be called at the beginning of the BPF program.
+ *
+ * 	The data is stored as struct perf_branch_entry into output
+ * 	buffer *entries*. *size* is the size of *entries* in bytes.
+ * 	*flags* is reserved for now and must be zero.
+ *
+ *
+ * Returns
+ * 	On success, number of bytes written to *buf*. On error, a
+ * 	negative value.
+ *
+ * 	**-EINVAL** if *flags* is not zero.
+ *
+ * 	**-ENOENT** if architecture does not support branch records.
+ */
+static long (*bpf_get_branch_snapshot)(void *entries, __u32 size, __u64 flags) = (void *) 176;
+
+/*
+ * bpf_trace_vprintk
+ *
+ * 	Behaves like **bpf_trace_printk**\ () helper, but takes an array of u64
+ * 	to format and can handle more format args as a result.
+ *
+ * 	Arguments are to be used as in **bpf_seq_printf**\ () helper.
+ *
+ * Returns
+ * 	The number of bytes written to the buffer, or a negative error
+ * 	in case of failure.
+ */
+static long (*bpf_trace_vprintk)(const char *fmt, __u32 fmt_size, const void *data, __u32 data_len) = (void *) 177;
 
 
