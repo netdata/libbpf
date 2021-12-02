@@ -15,7 +15,7 @@ Run "${PROJECT_NAME}" tests in a virtual machine.
 This exits with status 0 on success, 1 if the virtual machine ran successfully
 but tests failed, and 2 if we encountered a fatal error.
 
-This script uses sudo to mount and modify the disk image.
+This script uses sudo to work around a libguestfs bug.
 
 Arguments:
   IMG                 path of virtual machine disk image to create
@@ -177,6 +177,11 @@ else
 	fi
 	IMG="${!OPTIND}"
 fi
+if [[ "${SOURCE_FULLCOPY}" == "1" ]]; then
+	img_size=2G
+else
+	img_size=8G
+fi
 
 unset URLS
 cache_urls() {
@@ -194,7 +199,7 @@ matching_kernel_releases() {
 	local pattern="$1"
 	{
 	for file in "${!URLS[@]}"; do
-		if [[ $file =~ ^vmlinux-(.*).zst$ ]]; then
+		if [[ $file =~ ^${ARCH}/vmlinux-(.*).zst$ ]]; then
 			release="${BASH_REMATCH[1]}"
 			case "$release" in
 				$pattern)
@@ -211,7 +216,7 @@ matching_kernel_releases() {
 newest_rootfs_version() {
 	{
 	for file in "${!URLS[@]}"; do
-		if [[ $file =~ ^${PROJECT_NAME}-vmtest-rootfs-(.*)\.tar\.zst$ ]]; then
+		if [[ $file =~ ^${ARCH}/${PROJECT_NAME}-vmtest-rootfs-(.*)\.tar\.zst$ ]]; then
 			echo "${BASH_REMATCH[1]}"
 		fi
 	done
@@ -242,15 +247,29 @@ cp_img() {
 create_rootfs_img() {
 	local path="$1"
 	set_nocow "$path"
-	truncate -s 2G "$path"
+	truncate -s "$img_size" "$path"
 	mkfs.ext4 -q "$path"
 }
 
 download_rootfs() {
 	local rootfsversion="$1"
-	local dir="$2"
-	download "${PROJECT_NAME}-vmtest-rootfs-$rootfsversion.tar.zst" |
-		zstd -d | sudo tar -C "$dir" -x
+	download "${ARCH}/${PROJECT_NAME}-vmtest-rootfs-$rootfsversion.tar.zst" |
+		zstd -d
+}
+
+tar_in() {
+	local dst_path="$1"
+	# guestfish --remote does not forward file descriptors, which prevents
+	# us from using `tar-in -` or bash process substitution. We don't want
+	# to copy all the data into a temporary file, so use a FIFO.
+	tmp=$(mktemp -d)
+	mkfifo "$tmp/fifo"
+	cat >"$tmp/fifo" &
+	local cat_pid=$!
+	guestfish --remote tar-in "$tmp/fifo" "$dst_path"
+	wait "$cat_pid"
+	rm -r "$tmp"
+	tmp=
 }
 
 if (( LIST )); then
@@ -282,10 +301,10 @@ if [[ $SKIPIMG -eq 0 && ! -v ROOTFSVERSION ]]; then
 	ROOTFSVERSION="$(newest_rootfs_version)"
 fi
 
+travis_fold start vmlinux_setup "Preparing Linux image"
+
 echo "Kernel release: $KERNELRELEASE" >&2
 echo
-
-travis_fold start vmlinux_setup "Preparing Linux image"
 
 if (( SKIPIMG )); then
 	echo "Not extracting root filesystem" >&2
@@ -295,20 +314,14 @@ fi
 echo "Disk image: $IMG" >&2
 
 tmp=
-ARCH_DIR="$DIR/x86_64"
+ARCH_DIR="$DIR/$ARCH"
 mkdir -p "$ARCH_DIR"
-mnt="$(mktemp -d -p "$DIR" mnt.XXXXXXXXXX)"
 
 cleanup() {
 	if [[ -n $tmp ]]; then
-		rm -f "$tmp" || true
+		rm -rf "$tmp" || true
 	fi
-	if mountpoint -q "$mnt"; then
-		sudo umount "$mnt" || true
-	fi
-	if [[ -d "$mnt" ]]; then
-		rmdir "$mnt" || true
-	fi
+	guestfish --remote exit 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -318,18 +331,25 @@ else
 	vmlinuz="${ARCH_DIR}/vmlinuz-${KERNELRELEASE}"
 	if [[ ! -e $vmlinuz ]]; then
 		tmp="$(mktemp "$vmlinuz.XXX.part")"
-		download "vmlinuz-${KERNELRELEASE}" -o "$tmp"
+		download "${ARCH}/vmlinuz-${KERNELRELEASE}" -o "$tmp"
 		mv "$tmp" "$vmlinuz"
 		tmp=
 	fi
 fi
 
-# Mount and set up the rootfs image.
+# Mount and set up the rootfs image. Use a persistent guestfish session in
+# order to avoid the startup overhead.
+# Work around https://bugs.launchpad.net/fuel/+bug/1467579.
+sudo chmod +r /boot/vmlinuz*
+eval "$(guestfish --listen)"
 if (( ONESHOT )); then
 	rm -f "$IMG"
 	create_rootfs_img "$IMG"
-	sudo mount -o loop "$IMG" "$mnt"
-	download_rootfs "$ROOTFSVERSION" "$mnt"
+	guestfish --remote \
+		add "$IMG" label:img : \
+		launch : \
+		mount /dev/disk/guestfs/img /
+	download_rootfs "$ROOTFSVERSION" | tar_in /
 else
 	if (( ! SKIPIMG )); then
 		rootfs_img="${ARCH_DIR}/${PROJECT_NAME}-vmtest-rootfs-${ROOTFSVERSION}.img"
@@ -337,13 +357,15 @@ else
 		if [[ ! -e $rootfs_img ]]; then
 			tmp="$(mktemp "$rootfs_img.XXX.part")"
 			set_nocow "$tmp"
-			truncate -s 2G "$tmp"
+			truncate -s "$img_size" "$tmp"
 			mkfs.ext4 -q "$tmp"
-			sudo mount -o loop "$tmp" "$mnt"
 
-			download_rootfs "$ROOTFSVERSION" "$mnt"
+			# libguestfs supports hotplugging only with a libvirt
+			# backend, which we are not using here, so handle the
+			# temporary image in a separate session.
+			download_rootfs "$ROOTFSVERSION" |
+				guestfish -a "$tmp" tar-in - /
 
-			sudo umount "$mnt"
 			mv "$tmp" "$rootfs_img"
 			tmp=
 		fi
@@ -351,11 +373,14 @@ else
 		rm -f "$IMG"
 		cp_img "$rootfs_img" "$IMG"
 	fi
-	sudo mount -o loop "$IMG" "$mnt"
+	guestfish --remote \
+		add "$IMG" label:img : \
+		launch : \
+		mount /dev/disk/guestfs/img /
 fi
 
 # Install vmlinux.
-vmlinux="$mnt/boot/vmlinux-${KERNELRELEASE}"
+vmlinux="/boot/vmlinux-${KERNELRELEASE}"
 if [[ -v BUILDDIR || $ONESHOT -eq 0 ]]; then
 	if [[ -v BUILDDIR ]]; then
 		source_vmlinux="${BUILDDIR}/vmlinux"
@@ -363,20 +388,19 @@ if [[ -v BUILDDIR || $ONESHOT -eq 0 ]]; then
 		source_vmlinux="${ARCH_DIR}/vmlinux-${KERNELRELEASE}"
 		if [[ ! -e $source_vmlinux ]]; then
 			tmp="$(mktemp "$source_vmlinux.XXX.part")"
-			download "vmlinux-${KERNELRELEASE}.zst" | zstd -dfo "$tmp"
+			download "${ARCH}/vmlinux-${KERNELRELEASE}.zst" | zstd -dfo "$tmp"
 			mv "$tmp" "$source_vmlinux"
 			tmp=
 		fi
 	fi
-	echo "Copying vmlinux..." >&2
-	sudo rsync -cp --chmod 0644 "$source_vmlinux" "$vmlinux"
 else
-	# We could use "sudo zstd -o", but let's not run zstd as root with
-	# input from the internet.
-	download "vmlinux-${KERNELRELEASE}.zst" |
-		zstd -d | sudo tee "$vmlinux" > /dev/null
-	sudo chmod 644 "$vmlinux"
+	source_vmlinux="${ARCH_DIR}/vmlinux-${KERNELRELEASE}"
+	download "${ARCH}/vmlinux-${KERNELRELEASE}.zst" | zstd -d >"$source_vmlinux"
 fi
+echo "Copying vmlinux..." >&2
+guestfish --remote \
+	upload "$source_vmlinux" "$vmlinux" : \
+	chmod 644 "$vmlinux"
 
 travis_fold end vmlinux_setup
 
@@ -384,14 +408,24 @@ REPO_PATH="${SELFTEST_REPO_PATH:-travis-ci/vmtest/bpf-next}"
 LIBBPF_PATH="${REPO_ROOT}" \
 	VMTEST_ROOT="${VMTEST_ROOT}" \
 	REPO_PATH="${REPO_PATH}" \
-	VMLINUX_BTF=${vmlinux} ${VMTEST_ROOT}/build_selftests.sh
+	VMLINUX_BTF=$(realpath ${source_vmlinux}) ${VMTEST_ROOT}/build_selftests.sh
 
 travis_fold start bpftool_checks "Running bpftool checks..."
+bpftool_exitstatus=
 if [[ "${KERNEL}" = 'LATEST' ]]; then
-	"${REPO_ROOT}/${REPO_PATH}/tools/testing/selftests/bpf/test_bpftool_synctypes.py" && \
-		echo "Consistency checks passed successfully."
+	# "&& true" does not change the return code (it is not executed if the
+	# Python script fails), but it prevents the trap on ERR set at the top
+	# of this file to trigger on failure.
+	"${REPO_ROOT}/${REPO_PATH}/tools/testing/selftests/bpf/test_bpftool_synctypes.py" && true
+	bpftool_exitstatus=$?
+	if [[ "$bpftool_exitstatus" -eq 0 ]]; then
+		print_notice bpftool_checks "bpftool checks passed successfully."
+	else
+		print_error bpftool_checks "bpftool checks returned ${bpftool_exitstatus}."
+	fi
+	bpftool_exitstatus="bpftool:${bpftool_exitstatus}"
 else
-	echo "Consistency checks skipped."
+	echo "bpftool checks skipped."
 fi
 travis_fold end bpftool_checks
 
@@ -402,23 +436,31 @@ if (( SKIPSOURCE )); then
 else
 	echo "Copying source files..." >&2
 	# Copy the source files in.
-	sudo mkdir -p -m 0755 "$mnt/${PROJECT_NAME}"
+	guestfish --remote \
+		mkdir-p "/${PROJECT_NAME}" : \
+		chmod 0755 "/${PROJECT_NAME}"
 	if [[ "${SOURCE_FULLCOPY}" == "1" ]]; then
-		git ls-files -z | sudo rsync --files-from=- -0cpt . "$mnt/${PROJECT_NAME}"
+		git ls-files -z | tar --null --files-from=- -c | tar_in "/${PROJECT_NAME}"
 	else
-		sudo mkdir -p -m 0755 ${mnt}/${PROJECT_NAME}/{selftests,travis-ci}
+		guestfish --remote \
+			mkdir-p "/${PROJECT_NAME}/selftests" : \
+			chmod 0755 "/${PROJECT_NAME}/selftests" : \
+			mkdir-p "/${PROJECT_NAME}/travis-ci" : \
+			chmod 0755 "/${PROJECT_NAME}/travis-ci"
 		tree --du -shaC "${REPO_ROOT}/selftests/bpf"
-		sudo rsync -avm "${REPO_ROOT}/selftests/bpf" "$mnt/${PROJECT_NAME}/selftests/"
-		sudo rsync -avm "${REPO_ROOT}/travis-ci/vmtest" "$mnt/${PROJECT_NAME}/travis-ci/"
-        fi
-
+		tar -C "${REPO_ROOT}/selftests" -c bpf | tar_in "/${PROJECT_NAME}/selftests"
+		tar -C "${REPO_ROOT}/travis-ci" -c vmtest | tar_in "/${PROJECT_NAME}/travis-ci"
+	fi
 fi
 
-setup_script="#!/bin/sh
+tmp=$(mktemp)
+cat <<HERE >"$tmp"
+"#!/bin/sh
 
 echo 'Skipping setup commands'
-echo 0 > /exitstatus
-chmod 644 /exitstatus"
+echo vm_start:0 > /exitstatus
+chmod 644 /exitstatus
+HERE
 
 # Create the init scripts.
 if [[ ! -z SETUPCMD ]]; then
@@ -427,51 +469,101 @@ if [[ ! -z SETUPCMD ]]; then
 	kernel="${KERNELRELEASE}"
 	if [[ -v BUILDDIR ]]; then kernel='latest'; fi
 	setup_envvars="export KERNEL=${kernel}"
-	setup_script=$(printf "#!/bin/sh
+	cat <<HERE >"$tmp"
+#!/bin/sh
 set -eux
 
 echo 'Running setup commands'
-%s
-set +e; %s; exitstatus=\$?; set -e
-echo \$exitstatus > /exitstatus
-chmod 644 /exitstatus" "${setup_envvars}" "${setup_cmd}")
+${setup_envvars}
+set +e
+${setup_cmd}; exitstatus=\$?
+echo -e '$(travis_fold start collect_status "Collect status")'
+set -e
+# If setup command did not write its exit status to /exitstatus, do it now
+if [[ ! -s /exitstatus ]]; then
+	echo setup_cmd:\$exitstatus > /exitstatus
+fi
+chmod 644 /exitstatus
+echo -e '$(travis_fold end collect_status)'
+echo -e '$(travis_fold start shutdown Shutdown)'
+HERE
 fi
 
-echo "${setup_script}" | sudo tee "$mnt/etc/rcS.d/S50-run-tests" > /dev/null
-sudo chmod 755 "$mnt/etc/rcS.d/S50-run-tests"
+guestfish --remote \
+	upload "$tmp" /etc/rcS.d/S50-run-tests : \
+	chmod 755 /etc/rcS.d/S50-run-tests
 
-fold_shutdown="$(travis_fold start shutdown)"
-poweroff_script="#!/bin/sh
+cat <<HERE >"$tmp"
+#!/bin/sh
 
-echo ${fold_shutdown}
-echo -e '\033[1;33mShutdown\033[0m\n'
+poweroff
+HERE
+guestfish --remote \
+	upload "$tmp" /etc/rcS.d/S99-poweroff : \
+	chmod 755 /etc/rcS.d/S99-poweroff
+rm "$tmp"
+tmp=
 
-poweroff"
-echo "${poweroff_script}" | sudo tee "$mnt/etc/rcS.d/S99-poweroff" > /dev/null
-sudo chmod 755 "$mnt/etc/rcS.d/S99-poweroff"
-
-sudo umount "$mnt"
+guestfish --remote exit
 
 echo "Starting VM with $(nproc) CPUs..."
 
+case "$ARCH" in
+s390x)
+	qemu="qemu-system-s390x"
+	console="ttyS1"
+	smp=2
+	kvm_accel="-enable-kvm"
+	tcg_accel="-machine accel=tcg"
+	;;
+x86_64)
+	qemu="qemu-system-x86_64"
+	console="ttyS0,115200"
+	smp=$(nproc)
+	kvm_accel="-cpu kvm64 -enable-kvm"
+	tcg_accel="-cpu qemu64 -machine accel=tcg"
+	;;
+*)
+	echo "Unsupported architecture"
+	exit 1
+	;;
+esac
 if kvm-ok ; then
-  accel="-cpu kvm64 -enable-kvm"
+  accel=$kvm_accel
 else
-  accel="-cpu qemu64 -machine accel=tcg"
+  accel=$tcg_accel
 fi
-qemu-system-x86_64 -nodefaults -display none -serial mon:stdio -no-reboot \
-  ${accel} -smp "$(nproc)" -m 4G \
+"$qemu" -nodefaults -display none -serial mon:stdio \
+  ${accel} -smp "$smp" -m 4G \
   -drive file="$IMG",format=raw,index=1,media=disk,if=virtio,cache=none \
-  -kernel "$vmlinuz" -append "root=/dev/vda rw console=ttyS0,115200 kernel.panic=-1 $APPEND"
-sudo mount -o loop "$IMG" "$mnt"
-if exitstatus="$(cat "$mnt/exitstatus" 2>/dev/null)"; then
+  -kernel "$vmlinuz" -append "root=/dev/vda rw console=$console kernel.panic=-1 $APPEND"
+
+# Set exit status to 1 if at least one group test returned non-0
+exitfile="${bpftool_exitstatus}${bpftool_exitstatus:+\n}"
+exitfile+="$(guestfish --ro -a "$IMG" -i cat /exitstatus 2>/dev/null)"
+exitstatus="$(echo -e "$exitfile" | awk --field-separator ':' \
+	'BEGIN { s=0 } { if ($2) {s=1} } END { print s }')"
+
+if [[ "$exitstatus" =~ ^[0-9]+$ ]]; then
 	printf '\nTests exit status: %s\n' "$exitstatus" >&2
 else
-	printf '\nCould not read tests exit status\n' >&2
+	printf '\nCould not read tests exit status ("%s")\n' "$exitstatus" >&2
 	exitstatus=1
 fi
-sudo umount "$mnt"
 
 travis_fold end shutdown
+
+# Final summary - Don't use a fold, keep it visible
+echo -e "\033[1;33mTest Results:\033[0m"
+echo -e "$exitfile" | while read result; do
+	testgroup=${result%:*}
+	status=${result#*:}
+	# Print final result for each group of tests
+	if [[ "$status" -eq 0 ]]; then
+		printf "%20s: \033[1;32mPASS\033[0m\n" "$testgroup"
+	else
+		printf "%20s: \033[1;31mFAIL\033[0m (returned %s)\n" "$testgroup" "$status"
+	fi
+done
 
 exit "$exitstatus"

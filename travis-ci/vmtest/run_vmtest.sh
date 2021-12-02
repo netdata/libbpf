@@ -23,7 +23,7 @@ sudo add-apt-repository "deb http://apt.llvm.org/focal/ llvm-toolchain-focal mai
 sudo apt-get update
 sudo apt-get install --allow-downgrades -y libc6=2.31-0ubuntu9.2
 sudo aptitude install -y g++ libelf-dev
-sudo aptitude install -y clang-14 lld-14 llvm-14
+sudo aptitude install -y clang-14 llvm-14
 
 travis_fold end install_clang
 
@@ -35,10 +35,12 @@ else
   ${VMTEST_ROOT}/prepare_selftests.sh
 fi
 
+travis_fold start adduser_to_kvm "Add user ${USER}"
+sudo adduser "${USER}" kvm
+travis_fold stop adduser_to_kvm
+
 # Escape whitespace characters.
 setup_cmd=$(sed 's/\([[:space:]]\)/\\\1/g' <<< "${VMTEST_SETUPCMD}")
-
-sudo adduser "${USER}" kvm
 
 if [[ "${KERNEL}" = 'LATEST' ]]; then
   if [[ "$CHECKOUT_KERNEL" == "1" ]]; then

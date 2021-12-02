@@ -6,7 +6,7 @@ source $(cd $(dirname $0) && pwd)/helpers.sh
 
 travis_fold start prepare_selftests "Building selftests"
 
-sudo apt-get -y install python-docutils # for rst2man
+sudo apt-get -y install python3-docutils # for rst2man
 
 LLVM_VER=14
 LIBBPF_PATH="${REPO_ROOT}"
@@ -37,6 +37,6 @@ cd ${LIBBPF_PATH}
 rm selftests/bpf/.gitignore
 git add selftests
 
-git add "${VMTEST_ROOT}/configs/blacklist"
+git add "${VMTEST_ROOT}"/configs/blacklist/BLACKLIST-* "${VMTEST_ROOT}"/configs/whitelist/WHITELIST-*
 
 travis_fold end prepare_selftests

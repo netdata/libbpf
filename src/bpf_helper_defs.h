@@ -314,7 +314,7 @@ static long (*bpf_l4_csum_replace)(struct __sk_buff *skb, __u32 offset, __u64 fr
  * 	if the maximum number of tail calls has been reached for this
  * 	chain of programs. This limit is defined in the kernel by the
  * 	macro **MAX_TAIL_CALL_CNT** (not accessible to user space),
- * 	which is currently set to 32.
+ * 	which is currently set to 33.
  *
  * Returns
  * 	0 on success, or a negative error in case of failure.
@@ -4112,5 +4112,28 @@ static struct unix_sock *(*bpf_skc_to_unix_sock)(void *sk) = (void *) 178;
  * 	**-EPERM** if caller does not have permission to obtain kernel address.
  */
 static long (*bpf_kallsyms_lookup_name)(const char *name, int name_sz, int flags, __u64 *res) = (void *) 179;
+
+/*
+ * bpf_find_vma
+ *
+ * 	Find vma of *task* that contains *addr*, call *callback_fn*
+ * 	function with *task*, *vma*, and *callback_ctx*.
+ * 	The *callback_fn* should be a static function and
+ * 	the *callback_ctx* should be a pointer to the stack.
+ * 	The *flags* is used to control certain aspects of the helper.
+ * 	Currently, the *flags* must be 0.
+ *
+ * 	The expected callback signature is
+ *
+ * 	long (\*callback_fn)(struct task_struct \*task, struct vm_area_struct \*vma, void \*callback_ctx);
+ *
+ *
+ * Returns
+ * 	0 on success.
+ * 	**-ENOENT** if *task->mm* is NULL, or no vma contains *addr*.
+ * 	**-EBUSY** if failed to try lock mmap_lock.
+ * 	**-EINVAL** for invalid **flags**.
+ */
+static long (*bpf_find_vma)(struct task_struct *task, __u64 addr, void *callback_fn, void *callback_ctx, __u64 flags) = (void *) 180;
 
 

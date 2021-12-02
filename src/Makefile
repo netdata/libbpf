@@ -5,7 +5,7 @@ ifeq ($(V),1)
 	msg =
 else
 	Q = @
-	msg = @printf '  %-8s %s%s\n' "$(1)" "$(notdir $(2))" "$(if $(3), $(3))";
+	msg = @printf '  %-8s %s%s\n' "$(1)" "$(2)" "$(if $(3), $(3))";
 endif
 
 LIBBPF_VERSION := $(shell \
@@ -20,7 +20,7 @@ ALL_CFLAGS := $(INCLUDES)
 
 SHARED_CFLAGS += -fPIC -fvisibility=hidden -DSHARED
 
-CFLAGS ?= -g -O2 -Werror -Wall
+CFLAGS ?= -g -O2 -Werror -Wall -std=gnu89
 ALL_CFLAGS += $(CFLAGS) -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64
 ALL_LDFLAGS += $(LDFLAGS)
 ifdef NO_PKG_CONFIG
