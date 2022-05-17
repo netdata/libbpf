@@ -43,13 +43,13 @@ spinlock
 stacktrace_map
 stacktrace_map_raw_tp
 static_linked
-subprogs
 task_fd_query_rawtp
 task_fd_query_tp
 tc_bpf
 tcp_estats
 tcp_rtt
 tp_attach_query
+usdt/urand_pid_attach
 xdp
 xdp_info
 xdp_noinline
