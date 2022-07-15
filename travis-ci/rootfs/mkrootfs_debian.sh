@@ -20,7 +20,19 @@ root=$(mktemp -d -p "$PWD")
 trap 'rm -r "$root"' EXIT
 
 # Install packages.
-packages=binutils,busybox,elfutils,ethtool,iproute2,libcap2,libelf1,strace,zlib1g
+packages=(
+	binutils
+	busybox
+	elfutils
+	ethtool
+	iproute2
+	iptables
+	libcap2
+	libelf1
+	strace
+	zlib1g
+)
+packages=$(IFS=, && echo "${packages[*]}")
 debootstrap --include="$packages" --variant=minbase "$@" bookworm "$root"
 
 # Remove the init scripts (tests use their own). Also remove various
@@ -30,11 +42,6 @@ rm -rf \
 	"$root"/usr/share/{doc,info,locale,man,zoneinfo} \
 	"$root"/var/cache/apt/archives/* \
 	"$root"/var/lib/apt/lists/*
-
-# Save some more space by removing coreutils - the tests use busybox. Before
-# doing that, delete the buggy postrm script, which uses the rm command.
-rm -f "$root/var/lib/dpkg/info/coreutils.postrm"
-chroot "$root" dpkg --remove --force-remove-essential coreutils
 
 # Apply common tweaks.
 "$(dirname "$0")"/mkrootfs_tweak.sh "$root"

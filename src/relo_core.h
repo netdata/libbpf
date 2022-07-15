@@ -46,9 +46,9 @@ struct bpf_core_spec {
 
 struct bpf_core_relo_res {
 	/* expected value in the instruction, unless validate == false */
-	__u32 orig_val;
+	__u64 orig_val;
 	/* new value that needs to be patched up to */
-	__u32 new_val;
+	__u64 new_val;
 	/* relocation unsuccessful, poison instruction, but don't fail load */
 	bool poison;
 	/* some relocations can't be validated against orig_val */
@@ -68,6 +68,8 @@ struct bpf_core_relo_res {
 	__u32 new_type_id;
 };
 
+int __bpf_core_types_are_compat(const struct btf *local_btf, __u32 local_id,
+				const struct btf *targ_btf, __u32 targ_id, int level);
 int bpf_core_types_are_compat(const struct btf *local_btf, __u32 local_id,
 			      const struct btf *targ_btf, __u32 targ_id);
 
