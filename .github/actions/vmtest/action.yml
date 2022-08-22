@@ -16,7 +16,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    # setup envinronment
+    # setup environment
     - name: Setup environment
       uses: libbpf/ci/setup-build-env@master
       with:
@@ -41,9 +41,10 @@ runs:
     - name: Prepare to build BPF selftests
       shell: bash
       run: |
-        echo "::group::Prepare buidling selftest"
+        echo "::group::Prepare building selftest"
         cd .kernel
-        cp ${{ github.workspace }}/travis-ci/vmtest/configs/config-latest.${{ inputs.arch }} .config
+        cat tools/testing/selftests/bpf/config \
+            tools/testing/selftests/bpf/config.${{ inputs.arch }} > .config
         make olddefconfig && make prepare
         cd -
         echo "::endgroup::"
@@ -78,6 +79,7 @@ runs:
         kernel: ${{ inputs.kernel }}
         project-name: 'libbpf'
         arch: ${{ inputs.arch }}
+        image-output: '/tmp/root.img'
     # 5. run selftest in QEMU
     - name: Run selftests
       uses: libbpf/ci/run-qemu@master

@@ -1005,7 +1005,8 @@ static long (*bpf_skb_change_tail)(struct __sk_buff *skb, __u32 len, __u64 flags
  * 	Pull in non-linear data in case the *skb* is non-linear and not
  * 	all of *len* are part of the linear section. Make *len* bytes
  * 	from *skb* readable and writable. If a zero value is passed for
- * 	*len*, then the whole length of the *skb* is pulled.
+ * 	*len*, then all bytes in the linear part of *skb* will be made
+ * 	readable and writable.
  *
  * 	This helper is only needed for reading and writing with direct
  * 	packet access.
@@ -1238,10 +1239,12 @@ static long (*bpf_setsockopt)(void *bpf_socket, int level, int optname, void *op
  * 	There are two supported modes at this time:
  *
  * 	* **BPF_ADJ_ROOM_MAC**: Adjust room at the mac layer
- * 	  (room space is added or removed below the layer 2 header).
+ * 	  (room space is added or removed between the layer 2 and
+ * 	  layer 3 headers).
  *
  * 	* **BPF_ADJ_ROOM_NET**: Adjust room at the network layer
- * 	  (room space is added or removed below the layer 3 header).
+ * 	  (room space is added or removed between the layer 3 and
+ * 	  layer 4 headers).
  *
  * 	The following flags are supported at this time:
  *
@@ -1741,8 +1744,18 @@ static long (*bpf_skb_get_xfrm_state)(struct __sk_buff *skb, __u32 index, struct
  * 	**BPF_F_USER_STACK**
  * 		Collect a user space stack instead of a kernel stack.
  * 	**BPF_F_USER_BUILD_ID**
- * 		Collect buildid+offset instead of ips for user stack,
- * 		only valid if **BPF_F_USER_STACK** is also specified.
+ * 		Collect (build_id, file_offset) instead of ips for user
+ * 		stack, only valid if **BPF_F_USER_STACK** is also
+ * 		specified.
+ *
+ * 		*file_offset* is an offset relative to the beginning
+ * 		of the executable or shared object file backing the vma
+ * 		which the *ip* falls in. It is *not* an offset relative
+ * 		to that object's base address. Accordingly, it must be
+ * 		adjusted by adding (sh_addr - sh_offset), where
+ * 		sh_{addr,offset} correspond to the executable section
+ * 		containing *file_offset* in the object, for comparisons
+ * 		to symbols' st_value to be valid.
  *
  * 	**bpf_get_stack**\ () can collect up to
  * 	**PERF_MAX_STACK_DEPTH** both kernel and user frames, subject
@@ -4450,25 +4463,28 @@ static void (*bpf_ringbuf_discard_dynptr)(struct bpf_dynptr *ptr, __u64 flags) =
  *
  * 	Read *len* bytes from *src* into *dst*, starting from *offset*
  * 	into *src*.
+ * 	*flags* is currently unused.
  *
  * Returns
  * 	0 on success, -E2BIG if *offset* + *len* exceeds the length
- * 	of *src*'s data, -EINVAL if *src* is an invalid dynptr.
+ * 	of *src*'s data, -EINVAL if *src* is an invalid dynptr or if
+ * 	*flags* is not 0.
  */
-static long (*bpf_dynptr_read)(void *dst, __u32 len, struct bpf_dynptr *src, __u32 offset) = (void *) 201;
+static long (*bpf_dynptr_read)(void *dst, __u32 len, struct bpf_dynptr *src, __u32 offset, __u64 flags) = (void *) 201;
 
 /*
  * bpf_dynptr_write
  *
  * 	Write *len* bytes from *src* into *dst*, starting from *offset*
  * 	into *dst*.
+ * 	*flags* is currently unused.
  *
  * Returns
  * 	0 on success, -E2BIG if *offset* + *len* exceeds the length
  * 	of *dst*'s data, -EINVAL if *dst* is an invalid dynptr or if *dst*
- * 	is a read-only dynptr.
+ * 	is a read-only dynptr or if *flags* is not 0.
  */
-static long (*bpf_dynptr_write)(struct bpf_dynptr *dst, __u32 offset, void *src, __u32 len) = (void *) 202;
+static long (*bpf_dynptr_write)(struct bpf_dynptr *dst, __u32 offset, void *src, __u32 len, __u64 flags) = (void *) 202;
 
 /*
  * bpf_dynptr_data
@@ -4574,5 +4590,20 @@ static long (*bpf_tcp_raw_check_syncookie_ipv4)(struct iphdr *iph, struct tcphdr
  * 	**-EPROTONOSUPPORT** if CONFIG_IPV6 is not builtin.
  */
 static long (*bpf_tcp_raw_check_syncookie_ipv6)(struct ipv6hdr *iph, struct tcphdr *th) = (void *) 207;
+
+/*
+ * bpf_ktime_get_tai_ns
+ *
+ * 	A nonsettable system-wide clock derived from wall-clock time but
+ * 	ignoring leap seconds.  This clock does not experience
+ * 	discontinuities and backwards jumps caused by NTP inserting leap
+ * 	seconds as CLOCK_REALTIME does.
+ *
+ * 	See: **clock_gettime**\ (**CLOCK_TAI**)
+ *
+ * Returns
+ * 	Current *ktime*.
+ */
+static __u64 (*bpf_ktime_get_tai_ns)(void) = (void *) 208;
 
 
