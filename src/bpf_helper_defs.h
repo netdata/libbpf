@@ -29,6 +29,7 @@ struct tcp_request_sock;
 struct udp6_sock;
 struct unix_sock;
 struct task_struct;
+struct cgroup;
 struct __sk_buff;
 struct sk_msg_md;
 struct xdp_md;
@@ -536,6 +537,9 @@ static long (*bpf_skb_get_tunnel_key)(struct __sk_buff *skb, struct bpf_tunnel_k
  * 		sending the packet. This flag was added for GRE
  * 		encapsulation, but might be used with other protocols
  * 		as well in the future.
+ * 	**BPF_F_NO_TUNNEL_KEY**
+ * 		Add a flag to tunnel metadata indicating that no tunnel
+ * 		key should be set in the resulting tunnel header.
  *
  * 	Here is a typical usage on the transmit path:
  *
@@ -1209,14 +1213,19 @@ static long (*bpf_set_hash)(struct __sk_buff *skb, __u32 hash) = (void *) 48;
  * 	* **SOL_SOCKET**, which supports the following *optname*\ s:
  * 	  **SO_RCVBUF**, **SO_SNDBUF**, **SO_MAX_PACING_RATE**,
  * 	  **SO_PRIORITY**, **SO_RCVLOWAT**, **SO_MARK**,
- * 	  **SO_BINDTODEVICE**, **SO_KEEPALIVE**.
+ * 	  **SO_BINDTODEVICE**, **SO_KEEPALIVE**, **SO_REUSEADDR**,
+ * 	  **SO_REUSEPORT**, **SO_BINDTOIFINDEX**, **SO_TXREHASH**.
  * 	* **IPPROTO_TCP**, which supports the following *optname*\ s:
  * 	  **TCP_CONGESTION**, **TCP_BPF_IW**,
  * 	  **TCP_BPF_SNDCWND_CLAMP**, **TCP_SAVE_SYN**,
  * 	  **TCP_KEEPIDLE**, **TCP_KEEPINTVL**, **TCP_KEEPCNT**,
- * 	  **TCP_SYNCNT**, **TCP_USER_TIMEOUT**, **TCP_NOTSENT_LOWAT**.
+ * 	  **TCP_SYNCNT**, **TCP_USER_TIMEOUT**, **TCP_NOTSENT_LOWAT**,
+ * 	  **TCP_NODELAY**, **TCP_MAXSEG**, **TCP_WINDOW_CLAMP**,
+ * 	  **TCP_THIN_LINEAR_TIMEOUTS**, **TCP_BPF_DELACK_MAX**,
+ * 	  **TCP_BPF_RTO_MIN**.
  * 	* **IPPROTO_IP**, which supports *optname* **IP_TOS**.
- * 	* **IPPROTO_IPV6**, which supports *optname* **IPV6_TCLASS**.
+ * 	* **IPPROTO_IPV6**, which supports the following *optname*\ s:
+ * 	  **IPV6_TCLASS**, **IPV6_AUTOFLOWLABEL**.
  *
  * Returns
  * 	0 on success, or a negative error in case of failure.
@@ -1306,7 +1315,7 @@ static long (*bpf_skb_adjust_room)(struct __sk_buff *skb, __s32 len_diff, __u32 
  * 	**XDP_REDIRECT** on success, or the value of the two lower bits
  * 	of the *flags* argument on error.
  */
-static long (*bpf_redirect_map)(void *map, __u32 key, __u64 flags) = (void *) 51;
+static long (*bpf_redirect_map)(void *map, __u64 key, __u64 flags) = (void *) 51;
 
 /*
  * bpf_sk_redirect_map
@@ -1465,12 +1474,10 @@ static long (*bpf_perf_prog_read_value)(struct bpf_perf_event_data *ctx, struct 
  * 	  and **BPF_CGROUP_INET6_CONNECT**.
  *
  * 	This helper actually implements a subset of **getsockopt()**.
- * 	It supports the following *level*\ s:
- *
- * 	* **IPPROTO_TCP**, which supports *optname*
- * 	  **TCP_CONGESTION**.
- * 	* **IPPROTO_IP**, which supports *optname* **IP_TOS**.
- * 	* **IPPROTO_IPV6**, which supports *optname* **IPV6_TCLASS**.
+ * 	It supports the same set of *optname*\ s that is supported by
+ * 	the **bpf_setsockopt**\ () helper.  The exceptions are
+ * 	**TCP_BPF_*** is **bpf_setsockopt**\ () only and
+ * 	**TCP_SAVED_SYN** is **bpf_getsockopt**\ () only.
  *
  * Returns
  * 	0 on success, or a negative error in case of failure.
@@ -4484,7 +4491,7 @@ static void (*bpf_ringbuf_discard_dynptr)(struct bpf_dynptr *ptr, __u64 flags) =
  * 	of *src*'s data, -EINVAL if *src* is an invalid dynptr or if
  * 	*flags* is not 0.
  */
-static long (*bpf_dynptr_read)(void *dst, __u32 len, struct bpf_dynptr *src, __u32 offset, __u64 flags) = (void *) 201;
+static long (*bpf_dynptr_read)(void *dst, __u32 len, const struct bpf_dynptr *src, __u32 offset, __u64 flags) = (void *) 201;
 
 /*
  * bpf_dynptr_write
@@ -4498,7 +4505,7 @@ static long (*bpf_dynptr_read)(void *dst, __u32 len, struct bpf_dynptr *src, __u
  * 	of *dst*'s data, -EINVAL if *dst* is an invalid dynptr or if *dst*
  * 	is a read-only dynptr or if *flags* is not 0.
  */
-static long (*bpf_dynptr_write)(struct bpf_dynptr *dst, __u32 offset, void *src, __u32 len, __u64 flags) = (void *) 202;
+static long (*bpf_dynptr_write)(const struct bpf_dynptr *dst, __u32 offset, void *src, __u32 len, __u64 flags) = (void *) 202;
 
 /*
  * bpf_dynptr_data
@@ -4513,7 +4520,7 @@ static long (*bpf_dynptr_write)(struct bpf_dynptr *dst, __u32 offset, void *src,
  * 	read-only, if the dynptr is invalid, or if the offset and length
  * 	is out of bounds.
  */
-static void *(*bpf_dynptr_data)(struct bpf_dynptr *ptr, __u32 offset, __u32 len) = (void *) 203;
+static void *(*bpf_dynptr_data)(const struct bpf_dynptr *ptr, __u32 offset, __u32 len) = (void *) 203;
 
 /*
  * bpf_tcp_raw_gen_syncookie_ipv4
@@ -4626,7 +4633,7 @@ static __u64 (*bpf_ktime_get_tai_ns)(void) = (void *) 208;
  * 	Drain samples from the specified user ring buffer, and invoke
  * 	the provided callback for each such sample:
  *
- * 	long (\*callback_fn)(struct bpf_dynptr \*dynptr, void \*ctx);
+ * 	long (\*callback_fn)(const struct bpf_dynptr \*dynptr, void \*ctx);
  *
  * 	If **callback_fn** returns 0, the helper will continue to try
  * 	and drain the next sample, up to a maximum of
@@ -4661,5 +4668,51 @@ static __u64 (*bpf_ktime_get_tai_ns)(void) = (void *) 208;
  * 	within a struct bpf_dynptr.
  */
 static long (*bpf_user_ringbuf_drain)(void *map, void *callback_fn, void *ctx, __u64 flags) = (void *) 209;
+
+/*
+ * bpf_cgrp_storage_get
+ *
+ * 	Get a bpf_local_storage from the *cgroup*.
+ *
+ * 	Logically, it could be thought of as getting the value from
+ * 	a *map* with *cgroup* as the **key**.  From this
+ * 	perspective,  the usage is not much different from
+ * 	**bpf_map_lookup_elem**\ (*map*, **&**\ *cgroup*) except this
+ * 	helper enforces the key must be a cgroup struct and the map must also
+ * 	be a **BPF_MAP_TYPE_CGRP_STORAGE**.
+ *
+ * 	In reality, the local-storage value is embedded directly inside of the
+ * 	*cgroup* object itself, rather than being located in the
+ * 	**BPF_MAP_TYPE_CGRP_STORAGE** map. When the local-storage value is
+ * 	queried for some *map* on a *cgroup* object, the kernel will perform an
+ * 	O(n) iteration over all of the live local-storage values for that
+ * 	*cgroup* object until the local-storage value for the *map* is found.
+ *
+ * 	An optional *flags* (**BPF_LOCAL_STORAGE_GET_F_CREATE**) can be
+ * 	used such that a new bpf_local_storage will be
+ * 	created if one does not exist.  *value* can be used
+ * 	together with **BPF_LOCAL_STORAGE_GET_F_CREATE** to specify
+ * 	the initial value of a bpf_local_storage.  If *value* is
+ * 	**NULL**, the new bpf_local_storage will be zero initialized.
+ *
+ * Returns
+ * 	A bpf_local_storage pointer is returned on success.
+ *
+ * 	**NULL** if not found or there was an error in adding
+ * 	a new bpf_local_storage.
+ */
+static void *(*bpf_cgrp_storage_get)(void *map, struct cgroup *cgroup, void *value, __u64 flags) = (void *) 210;
+
+/*
+ * bpf_cgrp_storage_delete
+ *
+ * 	Delete a bpf_local_storage from a *cgroup*.
+ *
+ * Returns
+ * 	0 on success.
+ *
+ * 	**-ENOENT** if the bpf_local_storage cannot be found.
+ */
+static long (*bpf_cgrp_storage_delete)(void *map, struct cgroup *cgroup) = (void *) 211;
 
 
