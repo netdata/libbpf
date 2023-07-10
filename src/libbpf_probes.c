@@ -74,6 +74,10 @@ static __u32 get_debian_kernel_version(struct utsname *info)
 	if (sscanf(p, "Debian %u.%u.%u", &major, &minor, &patch) != 3)
 		return 0;
 
+	// Patch to run on Debian 10
+	if (major == 4 && minor == 19)
+                return KERNEL_VERSION(major, minor, 255);
+
 	return KERNEL_VERSION(major, minor, patch);
 }
 
