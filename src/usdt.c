@@ -466,7 +466,7 @@ static int parse_vma_segs(int pid, const char *lib_path, struct elf_seg **segs, 
 
 proceed:
 	sprintf(line, "/proc/%d/maps", pid);
-	f = fopen(line, "r");
+	f = fopen(line, "re");
 	if (!f) {
 		err = -errno;
 		pr_warn("usdt: failed to open '%s' to get base addr of '%s': %d\n",
@@ -771,7 +771,7 @@ static int collect_usdt_targets(struct usdt_manager *man, Elf *elf, const char *
 		target->rel_ip = usdt_rel_ip;
 		target->sema_off = usdt_sema_off;
 
-		/* notes.args references strings from Elf itself, so they can
+		/* notes.args references strings from ELF itself, so they can
 		 * be referenced safely until elf_end() call
 		 */
 		target->spec_str = note.args;
@@ -954,8 +954,7 @@ struct bpf_link *usdt_manager_attach_usdt(struct usdt_manager *man, const struct
 	spec_map_fd = bpf_map__fd(man->specs_map);
 	ip_map_fd = bpf_map__fd(man->ip_to_spec_id_map);
 
-	/* TODO: perform path resolution similar to uprobe's */
-	fd = open(path, O_RDONLY);
+	fd = open(path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		err = -errno;
 		pr_warn("usdt: failed to open ELF binary '%s': %d\n", path, err);
