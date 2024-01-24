@@ -16,6 +16,22 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Allow CI user to access /dev/kvm (via qemu) w/o group change/relogin
+    # by changing permissions set by udev.
+    - name: Set /dev/kvm permissions
+      shell: bash
+      run: |
+        if [ -e /dev/kvm ]; then
+          echo "/dev/kvm exists"
+          if [ $(id -u) != 0 ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+              | sudo tee /etc/udev/rules.d/99-kvm4all.rules > /dev/null
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+        else
+          echo "/dev/kvm does not exist"
+        fi
     # setup environment
     - name: Setup environment
       uses: libbpf/ci/setup-build-env@main
@@ -46,6 +62,8 @@ runs:
         cd .kernel
         cat tools/testing/selftests/bpf/config \
             tools/testing/selftests/bpf/config.${{ inputs.arch }} > .config
+        # this file might or mihgt not exist depending on kernel version
+        cat tools/testing/selftests/bpf/config.vm >> .config || :
         make olddefconfig && make prepare
         cd -
         foldable end
