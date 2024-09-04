@@ -13,22 +13,22 @@ concurrency:
 jobs:
   vmtest:
     runs-on: ${{ matrix.runs_on }}
-    name: Kernel ${{ matrix.kernel }} on ${{ matrix.runs_on }} + selftests
+    name: Kernel ${{ matrix.kernel }} on ${{ matrix.arch }} + selftests
     strategy:
       fail-fast: false
       matrix:
         include:
           - kernel: 'LATEST'
-            runs_on: ubuntu-20.04
+            runs_on: ubuntu-24.04
             arch: 'x86_64'
           - kernel: '5.5.0'
-            runs_on: ubuntu-20.04
+            runs_on: ubuntu-24.04
             arch: 'x86_64'
           - kernel: '4.9.0'
-            runs_on: ubuntu-20.04
+            runs_on: ubuntu-24.04
             arch: 'x86_64'
           - kernel: 'LATEST'
-            runs_on: s390x
+            runs_on: ["s390x", "docker-noble-main"]
             arch: 's390x'
     steps:
       - uses: actions/checkout@v4
